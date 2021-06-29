@@ -1,0 +1,6 @@
+
+- name: creating folder {{ home_drive  }}
+  win_file:
+    path: "{{ item }}\\{{ userName }}"
+    state: directory
+  loop: "{{ data_folder_path }}"

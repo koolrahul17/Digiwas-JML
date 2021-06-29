@@ -1,0 +1,43 @@
+- name: check user exist
+  block:
+    - shell: |
+          username="{{new_joiner_first_name}}.{{new_joiner_last_name}}"
+          temp_user_name=$username
+          n=0
+          user_not_exist=true
+          token={{ms_online_access_token}}
+          while $user_not_exist
+          do
+            result="$(curl -s -i -X GET -H "Accept: */*" -H "Content-Type: application/x-www-form-urlencoded" -H "Authorization: Bearer $token" "https://graph.microsoft.com/v1.0/users/$username@{{domain}}")"
+          sleep 5
+          if grep -q "does not exist" <<< "$result"; then
+              user_not_exist=false
+              else
+                n=$(( n+1 ))
+                iteration=$n
+                username=$temp_user_name$iteration
+          fi
+          done
+          echo $username
+
+      register: out
+  when: ritm_details.req_create_user is defined and action == 'JOINER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ user }}"
+        task_name:  check user exist
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_create_user }}"
+        statusMsg: "Check user exist Failed"
+        status: "{{ Failed_state }}"
+
+- set_fact:
+    valid_user_name: "{{ out.stdout }}"
+  when: out is defined
+
+- debug:
+    msg: "{{ valid_user_name }}"

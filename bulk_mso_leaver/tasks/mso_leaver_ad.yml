@@ -1,0 +1,481 @@
+---
+# not needed as user id was alreadt extracted in "Get Employee information using Employee Number" plat in "get_resource details"
+#- name: Get the user ID for the given {{ leaver_name }}
+#  block:
+#    - uri:
+#        url: "{{ user_uri }}/{{ leaver_name }}@{{ domain }}?$select=id"
+#        method: GET
+#        return_content: yes
+#        headers:
+#          Content-Type: "application/x-www-form-urlencoded"
+#          Authorization: "Bearer {{ ms_online_access_token }}"
+#        validate_certs: false
+#        status_code: 200
+#      register: get_user_id_for_deletion
+#  when: ritm_details.req_software is defined and cartridge_form_id == 'LEAVER'
+#  rescue:
+#    - import_role:
+#        name: common_utilities
+#        tasks_from: logging
+#      vars:
+#        exception: "{{ get_user_id_for_deletion }}"
+#        task_name: Get user ID
+#        is_all_task_success: "No"
+#        statusMsg: "Failed to fetch user ID for the given leaver name"
+#        status: "{{ Failed_state }}"
+
+#- set_fact:
+#     user_id: "{{ get_user_id_for_deletion.json.id }}"
+
+- name: Disable {{ user_packet.leaver_name }} user in MSO365 and update the description
+  block:
+    - uri:
+        url: "{{ user_uri }}/{{userid}}"
+        method: PATCH
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "accountEnabled": false,
+            "onPremisesExtensionAttributes": {
+              "extensionAttribute1": "User Account is disabled",
+              "extensionAttribute2": "{{ user_packet.leaver_termination_date }}"
+            }
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: user
+    - set_fact:
+          disable_user_result: "Successful"
+  when: ritm_details.req_revoke_user is defined and cartridge_form_id == 'LEAVER_BULK' and userid != ""
+  rescue:
+    - set_fact:
+          disable_user_result: "Error"
+
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ user }}"
+        task_name: Update leaver user with required informations
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_revoke_user }}"
+        statusMsg: "Update User properties Failed"
+        status: "{{ Failed_state }}"   
+
+
+- set_fact:
+        user_sequence_count: "{{user_sequence + 1}}"
+
+- set_fact:
+      disable_user_result: "No user exists with employee ID"
+  when: userid == ""
+
+- set_fact:
+      userName: "{{user_employee_id}}"
+  when: userid == ""
+
+- set_fact:
+       userid_revoke_worknotes: "{{userid_revoke_worknotes}}\n{{user_sequence_count}}.{{disable_user_result}}:{{userName}}"
+     
+
+- set_fact:
+        disable_user_req_status: "{% if userid_revoke_worknotes.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+
+##Updating RITM STATUS###
+
+- name: Update RITM for Disabling User
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_revoke_user }}"
+    work_notes_status_msg: "{{userid_revoke_worknotes}}"
+    Status: "{{ disable_user_req_status }}"
+  when: last_iteration_count
+
+#RemovingExistingGroupsandAddingthem##
+
+- name: Get the current groups the user belongs to.
+  block:
+    - uri:
+        url: "{{ user_uri }}/{{ userid }}/memberOf/microsoft.graph.group?$select=displayName,id"
+        method: GET
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 200
+      register: get_group_memberOf_details
+  when: ritm_details.req_software is defined and cartridge_form_id == 'LEAVER_BULK' and userid != ""
+  rescue:
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ get_group_memberOf_details }}"
+        task_name: Get Group ids
+        is_all_task_success: "No"
+        statusMsg: "Failure while fetching Group details user belongs to"
+        status: "{{ Failed_state }}"
+
+- set_fact:
+    leaver_group_names: ""
+
+- set_fact:
+    leaver_group_names: "{{ leaver_group_names }},{{ leaver_group_names_item.displayName }}"
+  loop: "{{ get_group_memberOf_details.json.value }}"
+  loop_control:
+       loop_var: leaver_group_names_item
+  when: ritm_details.req_software is defined and cartridge_form_id == 'LEAVER_BULK' and userid != ""
+
+- set_fact:
+    leaver_group_names_list: "{{ leaver_group_names | regex_replace('^,', '') }}"
+  when: ritm_details.req_software is defined and cartridge_form_id == 'LEAVER_BULK' and userid != ""
+
+- set_fact:
+    current_groups: "{{ get_group_memberOf_details.json.value }}"
+  when: userid != ""
+
+- set_fact:
+    new_list: ""
+
+- set_fact:
+     new_list: "{{new_list}},{{current_groups_item.id}}"
+  loop: "{{ current_groups }}"
+  loop_control:
+         loop_var: current_groups_item
+  when: userid != ""
+
+- set_fact:
+    group_name_update_snow: "{{ leaver_group_names_list }}"  
+  when: userid != ""
+
+- set_fact:
+    group_name_update_snow: "No user exists with the mentioned employee ID"  
+  when: userid == ""
+
+- set_fact:
+    new_group_ids: "{{ new_list | regex_replace('^,', '') | trim }}"
+  when: userid != ""
+
+# - set_fact:
+#     group_ids_temp: "{{ new_group_ids[:-1] | regex_replace('^,', '') }}"
+
+- set_fact:
+    group_ids_to_delete: "{{ new_group_ids.split(',') }}"
+  when: userid != ""
+
+
+- name: Delete from groups the user belongs to.
+  block:
+    - uri:
+        url: "{{ groups_uri}}/{{ group_ids_to_delete_item | trim }}/members/{{ userid }}/$ref"
+        method: DELETE
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 204
+      register: get_group_memberOf
+      loop: "{{  group_ids_to_delete }}"
+      loop_control:
+           loop_var: group_ids_to_delete_item
+    - set_fact:
+            remove_group_result: "Successful"
+  when: ritm_details.req_software is defined and action == 'LEAVER_BULK' and userid != ""
+  rescue:
+    - set_fact:
+            remove_group_result: "Error"
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ get_group_memberOf }}"
+        task_name: Get Group ids
+        is_all_task_success: "No"
+        statusMsg: "Failure while deleting Groups from user account"
+        status: "{{ Failed_state }}"
+
+- set_fact:
+     remove_group_result: "skipped"
+  when: userid == ""
+
+## Add member to a group ##
+
+- name: Add member to disabled software group
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/groups/e4abca6f-ceb3-44d3-9419-1820eebf6f72/members/$ref" #disbled group ID has been hardcoded
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{userid}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: add_groupmembership
+      #loop: "{{ group_id_list}}"  #group_id_list is defined in the common_utilities/get_resource_details
+    - set_fact:
+            add_disable_group_result: "Successful"
+  when: (ritm_details.req_software is defined or ritm_details.req_distribution_list is defined) and cartridge_form_id == 'LEAVER_BULK' and userid != ""
+  rescue:
+    - set_fact:
+            add_disable_group_result: "Error"
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ add_groupmembership }}"
+        task_name: Add member to disable software group
+        is_all_task_success: "No"
+        statusMsg: "Failure while adding member to dsibaled software groups"
+        status: "{{ Failed_state }}"
+
+- set_fact:
+    add_disable_group_result: "skipped"
+  when: userid == ""
+
+  
+- set_fact:
+       group_removal_worknotes: "{{group_removal_worknotes}}\n{{user_sequence_count}}. {{userName}}, Groups: {{group_name_update_snow}}, Groups Removed: {{remove_group_result}}, Added to disabled group: {{add_disable_group_result}} "
+     
+
+- set_fact:
+        group_removal_req_status: "{% if group_removal_worknotes.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+
+##Updating SNOW Status##
+#disabled the below play as this is only updating the worknotes
+#- name: Update SNOW with software groups
+#  import_role:
+#    name: bulk_common_utilities
+#    tasks_from: snow_status_update
+#  when: req_no is defined and cartridge_form_id == 'LEAVER_BULK'
+#  vars:
+#    ritm_req_number: "{{ req_no }}"
+#    work_notes_status_msg: "Removed user from this groups {{ group_name_update_snow }}"
+#    Status: "{{ inProgess }}"            
+
+##Updating RITM STATUS###
+
+- name: Update RITM for removal of member from groups
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_software }}"
+    work_notes_status_msg: "{{group_removal_worknotes}}"
+    Status: "{{ group_removal_req_status }}"
+  when: ritm_details.req_software is defined and last_iteration_count
+  
+
+- name: Update RITM for removal of member from DL
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_distribution_list }}"
+    work_notes_status_msg: "{{group_removal_worknotes}}"
+    Status: "{{ group_removal_req_status }}"
+  when: ritm_details.req_distribution_list is defined and last_iteration_count
+
+- name: Update RITM for disabling mailbox
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_mailbox }}"
+    work_notes_status_msg: "{{group_removal_worknotes}}"
+    Status: "{{ group_removal_req_status }}"
+  when: ritm_details.req_mailbox is defined and last_iteration_count
+
+- name: Update RITM for disabling VPN
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_vpn }}"
+    work_notes_status_msg: "VPN access disabled successfully"
+    Status: "{{ State }}"
+  when: ritm_details.req_vpn is defined and last_iteration_count
+
+- name: Update RITM to return hardware
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_hardware_removal }}"
+    work_notes_status_msg: "Hardware Returned"
+    Status: "{{ State }}"
+  when: ritm_details.req_hardware_removal is defined and last_iteration_count
+
+- name: Update RITM for remove folder accesss
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_remove_folder_access }}"
+    work_notes_status_msg: "Storage folder access revoked"
+    Status: "{{ State }}"
+  when: ritm_details.req_remove_folder_access is defined and last_iteration_count
+
+
+  
+#sending_mails##
+
+- name: eMail to user requestor
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ mail_body_leaver_bulk }}"
+    to_email_address: "{{ requestor_email }}"
+    cc_email_address1: "{{ manager_email }}"
+    cc_email_address2: "{{ manager_email }}"
+  when: last_iteration_count
+
+
+- set_fact:
+        req_status: "{% if group_removal_worknotes.find('Error') != -1 or userid_revoke_worknotes.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+
+- set_fact:
+        req_msg: "{% if group_removal_worknotes.find('Error') != -1 or userid_revoke_worknotes.find('Error') != -1 %}Users were not processed successfully. Please check RITM worknotes{% else %}Leavers process completed successfully for all the users{% endif %}"
+  when: last_iteration_count
+
+- name: Update SNOW req for LEAVER
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: snow_status_update
+  when: req_no is defined and cartridge_form_id == 'LEAVER_BULK' and last_iteration_count
+  vars:
+    ritm_req_number: "{{ req_no }}"
+    work_notes_status_msg: "{{ req_msg }}"
+    Status: "{{ req_status }}"
+             
+  
+
+##Removing User##
+
+# - name: Removing User {{ leaver_name }} from the MSO365
+#   block:
+#     - uri:
+#         url: "{{ user_uri }}/{{ user_id }}"
+#         method: DELETE
+#         return_content: yes
+#         headers:
+#           Content-Type: "application/x-www-form-urlencoded"
+#           Authorization: "Bearer {{ ms_online_access_token }}"
+#         validate_certs: false
+#         status_code: 204
+#       register: delete_user
+#   when: ritm_details.req_software is defined and cartridge_form_id == 'LEAVER'
+#   rescue:
+#     - import_role:
+#         name: common_utilities
+#         tasks_from: logging
+#       vars:
+#         exception: "{{ delete_user }}"
+#         task_name: Deleting User from MSO365
+#         is_all_task_success: "No"
+#         statusMsg: "Failure in removing the user from the group"
+#         status: "{{ Failed_state }}"     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ---
+#
+# #- name: create AD Group
+# #  import_role:
+# #          name: windows_ad
+# #          tasks_from: create_group
+# #  when: (action == 'create_group') or (action == 'JOINER')
+#
+#
+# - name: Check and set user name
+#   import_role:
+#           name: windows_ad
+#           tasks_from: joiner_check_user
+#   when: ritm_details.req_create_user is defined and ((action == 'joiner_check_user') or (action == 'JOINER'))
+#
+# - name: create AD user account
+#   import_role:
+#           name: windows_ad
+#           tasks_from: joiner_create_user
+#   when: ritm_details.req_create_user is defined and ((action == 'joiner_check_user') or (action == 'JOINER'))
+#
+# - name: Add member to AD group
+#   import_role:
+#           name: windows_ad
+#           tasks_from: joiner_add_groupmember
+#   when: ritm_details.req_software is defined and ((action == 'joiner_add_groupmember') or (action == 'JOINER'))
+#
+#   #- name: adding intune group to user
+#   #  import_role:
+#   #    name: windows_ad
+#   #    tasks_from: add_groupmember
+#   #  vars:
+#   #    new_group: "{{ intune_groupName }}"
+#   #  when: intune_groupName is defined and ((action == 'add_groupmember') or (action == 'JOINER')) and ritm_details.req_software is defined
+#
+# - name: adding VDI group to user
+#   import_role:
+#     name: windows_ad
+#     tasks_from: add_groupmember
+#   vars:
+#     new_group: "{{ vdi_groups_name }}"
+#   when: ritm_details.req_software is defined and vdi_groups_name is defined and ((action == 'add_groupmember') or (action == 'JOINER'))
+#
+# - name: Modify attributes
+#   import_role:
+#           name: windows_ad
+#           tasks_from: joiner_modify_attributes
+#   when: ritm_details.req_create_user is defined and ((action == 'joiner_modify_attributes') or (action == 'JOINER'))

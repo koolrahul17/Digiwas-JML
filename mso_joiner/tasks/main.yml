@@ -1,0 +1,6 @@
+---
+# tasks file for mso_joiner
+
+- include_tasks: mso_check_user_ad.yml
+- include_tasks: mso_joiner_ad.yml
+#- include_tasks: mso_joiner_storage.yml

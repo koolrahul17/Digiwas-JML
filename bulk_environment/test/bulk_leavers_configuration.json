@@ -1,0 +1,62 @@
+{ 
+        "cartridge_id": "JML_BULK",
+        "cartridge_form_id": "LEAVER_BULK",
+        "req_account_name": "IBM",
+        "req_no": "REQ0011946",
+        "req_sys_id": "bb6154861be0e810bb05106a234bcbb9",
+        "req_no_creation_date": "2020-11-19 06:16:11",
+        "req_short_description": "Off-board multiple employees",
+        "manager_name" : "DigiWas.Manager",             
+        "manager_email" : "Digiwas.manager@dws-ipa.com",
+        "requestor_name" : "Digiwas.HR",
+        "requestor_email" : "Digiwas.hr@dws-ipa.com",
+        "domain": "dws-ipa.com",
+        "admin_user": "DigiWas-No-Reply@dws-ipa.com",
+        "default_noreply_mailbox": "DigiWas-No-Reply@dws-ipa.com",
+        "req_details":[
+        {                            
+            "leaver_employee_id": "0O",
+            "leaver_name": "Andy.John",
+            "leaver_additional_notification_emails": "Aman.Buttan@dws.ansible.com",
+            "leaver_termination_date": "11/23/2020"            
+        },
+        {                            
+            "leaver_employee_id": "01",
+            "leaver_name": "Genaro.Pinkerton",
+            "leaver_additional_notification_emails": "Aman.Buttan@dws.ansible.com",
+            "leaver_termination_date": "11/22/2020"            
+        },
+	{
+            "leaver_employee_id": "03",
+            "leaver_name": "Sahil Sachdeva",
+            "leaver_additional_notification_emails": "Aman.Buttan@dws.ansible.com",
+            "leaver_termination_date": "11/22/2020"
+        },
+
+        {
+            "leaver_employee_id": "07557J",
+            "leaver_name": "Ken Thompson",
+            "leaver_additional_notification_emails": "Aman.Buttan@dws.ansible.com",
+            "leaver_termination_date": "11/22/2020"
+        }
+
+    ],
+    "appConnect_url": "https://ac12954e.us-south.apigw.appdomain.cloud",
+    "ritm_details": {
+        "req_revoke_user": "RITM0016271",
+        "req_software": "RITM0016272",
+        "req_distribution_list": "RITM0016273",
+        "req_vpn":"RITM0016274",
+        "req_mailbox":"RITM0016275",
+        "req_hardware_removal":"RITM0016276",
+        "req_remove_folder_access": "RITM0016278"              
+    },
+    "ansible_details": [
+        {
+            "job_template_name": "JML-Template",
+            "job_id": 54,
+            "job_launch_url": "https://150.238.217.12/api/v2/job_templates/54/launch/"
+        }
+    ]
+}
+

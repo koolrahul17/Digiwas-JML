@@ -1,0 +1,316 @@
+
+- name: Creating new user with required informations
+  block:
+    - uri:
+        url: "{{ user_uri }}"
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "accountEnabled": true,
+            "city": "{{ user_packet.city_name }}",
+            "country": "{{ user_packet.country_name }}",
+            "department": "{{ user_packet.department_code }}",
+            "displayName": "{{ user_packet.new_joiner_first_name }}.{{ user_packet.new_joiner_last_name }}",
+            "givenName": "{{ user_packet.new_joiner_first_name }}",
+            "jobTitle": "{{ user_packet.job_title }}",
+            "employeeId": "{{ user_packet.new_joiner_employee_id }}",
+            "mailNickname": "{{ user_packet.new_joiner_first_name }}.{{ user_packet.new_joiner_last_name }}",
+            "passwordPolicies": "DisablePasswordExpiration",
+            "passwordProfile": {
+                "password": "{{ initial_user_password }}",
+                "forceChangePasswordNextSignIn": true
+            },
+            "officeLocation": "{{user_packet.office_location }}",
+            "preferredLanguage": "en-US",
+            "surname": "{{ user_packet.new_joiner_last_name }}",
+            "userPrincipalName": "{{ valid_user_name }}@{{ domain }}",
+            "onPremisesExtensionAttributes": {
+              "extensionAttribute1": "Welcome",
+            }
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 201
+      register: user
+    - set_fact:
+         userid_creation_result: "Successful"            
+  when: ritm_details.req_create_user is defined and cartridge_form_id == 'JOINER_BULK'
+  rescue:
+    - set_fact:
+        userid_creation_result: "Error"
+
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ user }}"
+        task_name: Creating new user with required informations
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_create_user }}"
+        statusMsg: "User Creation Failed"
+        status: "{{ Failed_state }}"
+
+# - name: Sleep for 10 seconds and continue with play
+#   wait_for:
+#     timeout: 10
+#   delegate_to: localhost
+
+- set_fact:
+    user_details: user
+    userName: "{{ user.json.userPrincipalName }}"
+  when: user is defined
+
+- debug:
+    msg: "{{ userName }}"
+
+- pause:
+        seconds: 15
+    
+- import_role:
+        name: bulk_common_utilities
+        tasks_from: mso_check_user_replication.yml
+
+
+
+
+- name: "Update manager to the user {{ user_packet.new_joiner_first_name }}.{{ user_packet.new_joiner_last_name }}"
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/users/{{ userName }}/manager/$ref"
+        method: PUT
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{manager_name}}@{{domain}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: update_manager
+
+    - set_fact:
+           manager_update_result: "Successful"
+  when: ritm_details.req_create_user is defined and cartridge_form_id == 'JOINER_BULK'
+  rescue:
+    - set_fact:
+           manager_update_result: "Error"
+
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ update_manager }}"
+        task_name: Update manager to the user {{ user_packet.new_joiner_first_name }}.{{ user_packet.new_joiner_last_name }}
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_create_user }}"
+        statusMsg: "User Creation Failed"
+        status: "{{ Failed_state }}"
+
+- debug:
+    msg: "{{ update_manager }}"
+
+- set_fact:
+        user_sequence_count: "{{user_sequence + 1}}"
+
+
+- set_fact:
+        userid_creation_worknotes: "{{userid_creation_worknotes}}\n{{user_sequence_count}}.{{userid_creation_result}}:{{userName}},Manager Update {{manager_update_result}}:{{manager_name}}@{{domain}}"
+
+ 
+        #- set_fact:
+        #userid_creation_worknotes_string: "{{  userid_creation_worknotes | regex_replace('^,', '') }}"
+
+
+- set_fact:
+        user_req_status: "{% if userid_creation_worknotes.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+
+
+##Updating RITM STATUS###
+
+
+- name: Update RITM for user creation ( Success )
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_create_user }}"
+    work_notes_status_msg: "{{userid_creation_worknotes}}"
+    Status: "{{user_req_status}}"
+  when: last_iteration_count
+
+
+
+## Add member to a group ##
+
+- pause:
+       seconds: 10
+
+
+- name: Add member to software group
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/groups/{{group_id_list_item}}/members/$ref"
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{userName}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: add_groupmembership
+      loop: "{{ group_id_list}}"  #group_id_list is defined in the common_utilities/get_resource_details
+      loop_control:
+             loop_var: group_id_list_item
+    - set_fact:
+            group_addition_result: "Success"
+
+  when: (ritm_details.req_software is defined or ritm_details.req_distribution_list is defined) and cartridge_form_id == 'JOINER_BULK'
+  rescue:
+    - set_fact:
+            group_addition_result: "Error"
+
+    - import_role:
+        name: bulk_common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ add_groupmembership }}"
+        task_name: Add member to software group
+        is_all_task_success: "No"
+        statusMsg: "Failure while adding member to software groups"
+        status: "{{ Failed_state }}"
+
+
+- set_fact:
+        group_addition_worknotes: "{{group_addition_worknotes}}\n{{user_sequence_count}}.{{group_addition_result}}:{{userName}}"
+
+        #- set_fact:
+        #group_addition_worknotes_string: "{{ group_addition_worknotes | regex_replace('^,', '') }}"
+
+       
+        
+- set_fact:
+        group_req_status: "{% if group_addition_worknotes.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+        
+        
+##Updating RITM STATUS###
+
+- name: Update RITM for creating mailbox sucessfully
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_mailbox }}"
+    work_notes_status_msg: "{{group_addition_worknotes}}"
+    Status: "{{group_req_status}}"
+  when: ritm_details.req_mailbox is defined and last_iteration_count
+
+
+- name: Update RITM for sucessfull addition of member to a DL
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_distribution_list }}"
+    work_notes_status_msg: "{{group_addition_worknotes}}"
+    Status: "{{group_req_status}}"
+  when: ritm_details.req_distribution_list is defined and last_iteration_count
+
+- name: Update RITM for sucessfull addition of member to a group
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_software }}"
+    work_notes_status_msg: "{{group_addition_worknotes}}"
+    Status: "{{group_req_status}}"
+  when: ritm_details.req_software is defined and last_iteration_count
+
+
+##PausingforMailboxCreation##
+- pause:
+   minutes: 2
+  when: last_iteration_count
+
+
+##sending_mails##
+
+- set_fact:
+        bulk_mail_user_content: "{{bulk_mail_user_content}}\n{{user_sequence_count}}. {{userid_creation_result}}:{{userName}}, Manager Update {{manager_update_result}}:{{manager_name}}@{{domain}}, Groups/DL Added:{{group_addition_result}}"
+
+- set_fact:
+        initial_user_password: "Error while creating user"
+  when: userid_creation_result == "Error"
+
+- set_fact:
+        user_password_list: "{{user_password_list}}\n{{user_sequence_count}}. {{initial_user_password}}"
+
+
+
+- name: Welcome eMail to user
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: send_mail_single_recipient
+  vars:
+    mail_content: "{{ mail_body_joiner }}"
+    to_email_address: "{{ userName }}"
+    
+
+- name: eMail to user requestor
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ bulk_mail_body_requestor }}"
+    to_email_address: "{{ requestor_email }}"
+    cc_email_address1: "{{ manager_email }}"
+    cc_email_address2: "{{ requestor_email }}"
+  when: last_iteration_count
+
+- name: Password eMail to user
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: send_mail_single_recipient
+  vars:
+    mail_content: "{{ bulk_mail_body_password }}"
+    to_email_address: "{{ manager_email }}"
+  when: last_iteration_count
+
+
+
+- set_fact:
+        req_status: "{% if group_addition_worknotes.find('Error') != -1 or userid_creation_worknotes.find('Error') != -1 or ticket_update_status_msgs.find('Error') != -1 %}{{ Failed_state }}{% else %}{{ State }}{% endif %}"
+  when: last_iteration_count
+
+
+- set_fact:
+        req_worknotes: "{% if group_addition_worknotes.find('Error') != -1 or userid_creation_worknotes.find('Error') != -1 or ticket_update_status_msgs.find('Error') != -1 %}'Error: Please check RITMs status'{% else %}'Users onboarded successfully'{% endif %}"
+  when: last_iteration_count
+
+
+
+- name: Update SNOW Request for Joiner
+  import_role:
+    name: bulk_common_utilities
+    tasks_from: snow_status_update
+  when: req_no is defined and cartridge_form_id == 'JOINER_BULK' and last_iteration_count
+  vars:
+    ritm_req_number: "{{ req_no }}"
+    work_notes_status_msg: "{{req_worknotes}}"
+    Status: "{{req_status}}"
+      

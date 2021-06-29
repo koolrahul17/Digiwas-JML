@@ -1,0 +1,5 @@
+---
+# tasks file for mso_leaver
+
+- include_tasks: mso_leaver_ad.yml
+#- include_tasks: mso_leaver_storage.yml

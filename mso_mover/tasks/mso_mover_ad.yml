@@ -1,0 +1,231 @@
+---
+
+- name: Update mover user with required informations
+  block:
+    - uri:
+        url: "{{ user_uri }}/{{mover_name}}@{{ domain }}"
+        method: PATCH
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "accountEnabled": true,
+            "city": "{{ city_name }}",
+            "country": "{{ country_name }}",
+            "department": "{{ department_code }}",
+            "jobTitle": "{{ job_title }}",
+            "officeLocation": "{{ office_location }}",
+            "preferredLanguage": "en-US"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: user
+  when: cartridge_form_id == 'MOVER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ user }}"
+        task_name: Update mover user with required informations
+        is_all_task_success: "No"
+
+- name: "Update new manager to the user {{ new_joiner_first_name }}.{{ new_joiner_last_name }}"
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/users/{{ mover_name }}@{{ domain }}/manager/$ref"
+        method: PUT
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{manager_name}}@{{domain}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: update_manager
+  when: cartridge_form_id == 'MOVER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ update_manager }}"
+        task_name: Update manager to the user {{ new_joiner_first_name }}.{{ new_joiner_last_name }}
+        is_all_task_success: "No"
+
+
+
+- name: Get the current groups the user belongs to.
+  block:
+    - uri:
+        url: "{{ user_uri }}/{{ mover_name }}@{{ domain }}/memberOf/microsoft.graph.group?$select=displayName,id"
+        method: GET
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 200
+      register: get_group_memberOf_details
+  when: ritm_details.req_software is defined and cartridge_form_id == 'MOVER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ get_group_memberOf_details }}"
+        task_name: Get Group ids
+        is_all_task_success: "No"
+
+
+- set_fact:
+    mover_group_names: ""
+
+- set_fact:
+    current_groups: "{{ get_group_memberOf_details.json.value }}"
+
+- set_fact:
+    new_list: ""
+
+- set_fact:
+     new_list: "{{new_list}},{{item.id}}"
+  loop: "{{ current_groups }}"
+
+- set_fact:
+    new_group_ids: "{{ new_list | regex_replace('^,', '') | trim }}"
+
+- set_fact:
+    new_group_ids: "{{ new_group_ids.split(',') | list}}"
+
+- set_fact:
+    group_ids_to_delete: "{{ new_group_ids | reject('match',reserved_license_group_id)| list}}"
+
+
+- set_fact:
+     mover_group_names: "{{ mover_group_names }},{{item.displayName}}"
+  loop: "{{ current_groups }}"
+
+- set_fact:
+     mover_group_names: "{{ mover_group_names | regex_replace('^,', '') | trim }}"
+
+- set_fact:
+     mover_group_names: "{{ mover_group_names.split(',') | list}}"
+
+
+- set_fact:
+    group_name_update_snow: "{{ mover_group_names | reject('match',reserved_license_group)| list}}"
+
+
+- name: Delete from groups the user belongs to.
+  block:
+    - uri:
+        url: "{{ groups_uri}}/{{ item | trim }}/members/{{ user_details.json.id }}/$ref"
+        method: DELETE
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 204
+      register: get_group_memberOf
+      loop: "{{  group_ids_to_delete }}"
+  when: ritm_details.req_software is defined and action == 'MOVER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ get_group_memberOf }}"
+        task_name: Get Group ids
+        is_all_task_success: "No"
+        statusMsg: "Failure while fetching Group ids for Group Names"
+        status: "{{ Failed_state }}"
+
+
+- name: Add member to software group
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/groups/{{item}}/members/$ref"
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{userName}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: add_groupmembership
+      loop: "{{ group_id_list}}"
+  when: (ritm_details.req_software is defined or ritm_details.req_distribution_list is defined) and cartridge_form_id == 'MOVER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ add_groupmembership }}"
+        task_name: Add member to software group
+        is_all_task_success: "No"
+        statusMsg: "Failure while adding member to software groups"
+        status: "{{ Failed_state }}"
+
+- name: Update RITM for DL updation
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  when: ritm_details.req_distribution_list is defined and cartridge_form_id == 'MOVER'
+  vars:
+    ritm_req_number: "{{ ritm_details.req_distribution_list }}"
+    work_notes_status_msg: "User DL updated Successfully"
+    Status: "{{ State }}"
+
+- name: Update RITM for updating user software groups
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  when: ritm_details.req_software is defined and cartridge_form_id == 'MOVER'
+  vars:
+    ritm_req_number: "{{ ritm_details.req_software }}"
+    work_notes_status_msg: "User software group successfully updated"
+    Status: "{{ State }}"
+
+- name: Update SNOW with software groups
+  import_role:
+    name: common_utilities
+    tasks_from: snow_status_update
+  when: req_no is defined and cartridge_form_id == 'MOVER'
+  vars:
+    ritm_req_number: "{{ req_no }}"
+    work_notes_status_msg: "Removed user from this groups {{ group_name_update_snow }}"
+    Status: "{{ inProgess }}"
+
+
+- name: Email to mover on successfull movement
+  import_role:
+    name: common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ mail_body_mover }}"
+    to_email_address: "{{ userName }}"
+    cc_email_address1: "{{ requestor_email }}"
+    cc_email_address2: "{{ manager_email }}"
+
+- name: Update SNOW req for Mover
+  import_role:
+    name: common_utilities
+    tasks_from: snow_status_update
+  when: req_no is defined and cartridge_form_id == 'MOVER'
+  vars:
+    ritm_req_number: "{{ req_no }}"
+    work_notes_status_msg: "User Moved Sucessfully"
+    Status: "{{ State }}"

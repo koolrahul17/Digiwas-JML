@@ -1,0 +1,6 @@
+---
+# defaults file for mso_leaver
+userid_revoke_worknotes: ""
+group_removal_worknotes: ""
+dl_removal_worknotes: ""
+mailbox_revoke_worknotes: ""

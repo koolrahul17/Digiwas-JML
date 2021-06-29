@@ -1,0 +1,108 @@
+- name: Get Group ids for passed software groups
+  block:
+    - uri:
+        url: "{{ groups_uri }}?$filter=displayName%20eq%20'{{ item.software_group }}'&$select=id"
+        method: GET
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 200
+      register: get_api_result_group_details
+      #when: uri_method == 'GET'
+      loop: "{{software_groups}}"
+  when: ritm_details.req_software is defined
+  rescue:
+    - include_tasks: logging.yml
+      vars:
+        exception: "{{ get_api_result_group_details }}"
+        task_name: Get Group ids for passed software groups
+        is_all_task_success: "No"
+        statusMsg: "Failure while fetching Group ids for Group Names"
+        status: "{{ Failed_state }}"
+
+- name: Get Id for Distribution List
+  block:
+    - uri:
+        url: "{{ groups_uri }}?$filter=displayName%20eq%20'{{ distribution_list }}'&$select=id"
+        method: GET
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 200
+      register: distribution_list_id
+  when: ritm_details.req_distribution_list is defined  and cartridge_form_id != 'LEAVER'
+  rescue:
+    - include_tasks: logging.yml
+      vars:
+        exception: "{{ distribution_list_id }}"
+        task_name: Get Id for Distribution List
+        is_all_task_success: "No"
+        statusMsg: "Failure while fetching id for Distribution List"
+        status: "{{ Failed_state }}"
+
+- name: Get Id for Reserved license group
+  block:
+    - uri:
+        url: "{{ groups_uri }}?$filter=displayName%20eq%20'{{ reserved_license_group }}'&$select=id"
+        method: GET
+        return_content: yes
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        validate_certs: false
+        status_code: 200
+      register: reserved_license_group_data
+  when: reserved_license_group is defined
+  rescue:
+    - include_tasks: logging.yml
+      vars:
+        exception: "{{ reserved_license_group_data }}"
+        task_name: Get Id for Reserved license group
+        is_all_task_success: "No"
+        statusMsg: "Failure while fetching id for Reserved license group"
+        status: "{{ Failed_state }}"
+
+- set_fact:
+    reserved_license_group_id: "{{ reserved_license_group_data.json.value[0].id }}"
+  when: reserved_license_group is defined and cartridge_form_id != 'LEAVER'
+
+- set_fact:
+    group_ids: ""
+
+- set_fact:
+    group_ids: "{{ distribution_list_id.json.value[0].id }}"
+  when: ritm_details.req_distribution_list is defined and cartridge_form_id != 'LEAVER'
+
+- set_fact:
+    group_ids: "{{ group_ids }},{{ item.json.value[0].id}}"
+  loop: "{{ get_api_result_group_details.results }}"
+
+- set_fact:
+    group_id_string: "{{ group_ids | regex_replace('^,', '') }}"
+
+- set_fact:
+    group_id_list: "{{ group_id_string.split(',') }}"
+
+- set_fact:
+    userName: "{% if cartridge_form_id == 'MOVER' %}{{ mover_name }}@{{ domain }}{% elif cartridge_form_id == 'LEAVER' %}{{ leaver_name }}@{{ domain }}{% endif %}"
+
+- name: Get user details
+  uri:
+    url: "{{ ms_graph_uri }}/v1.0/users/{{ userName }}"
+    method: GET
+    return_content: yes
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+      Authorization: "Bearer {{ ms_online_access_token }}"
+    validate_certs: false
+    status_code: 200
+  register: user_details
+  when: cartridge_form_id == 'MOVER' or cartridge_form_id == 'LEAVER'
+
+- set_fact:
+    user_details: "{{ user_details }}"
+  when: cartridge_form_id == 'MOVER' or cartridge_form_id == 'LEAVER'

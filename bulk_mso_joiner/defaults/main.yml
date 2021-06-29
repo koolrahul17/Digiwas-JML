@@ -1,0 +1,10 @@
+---
+# defaults file for mso_joiner
+
+userid_creation_worknotes: ""
+group_addition_worknotes: ""
+dl_addition_worknotes: ""
+mailbox_creation_worknotes: ""
+user_password_list: ""
+bulk_mail_user_content: ""
+

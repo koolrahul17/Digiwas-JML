@@ -1,0 +1,5 @@
+---
+# tasks file for mso_mover
+
+- include_tasks: mso_mover_ad.yml
+# - include_tasks: mso_mover_storage.yml

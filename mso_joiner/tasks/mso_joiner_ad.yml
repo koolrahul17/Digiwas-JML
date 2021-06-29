@@ -1,0 +1,222 @@
+
+- name: Creating new user with required informations
+  block:
+    - uri:
+        url: "{{ user_uri }}"
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "accountEnabled": true,
+            "city": "{{ city_name }}",
+            "country": "{{ country_name }}",
+            "department": "{{ department_code }}",
+            "displayName": "{{ new_joiner_first_name }}.{{ new_joiner_last_name }}",
+            "givenName": "{{ new_joiner_first_name }}",
+            "jobTitle": "{{ job_title }}",
+            "employeeId": "{{ new_joiner_employee_id }}",
+            "mailNickname": "{{ new_joiner_first_name }}.{{ new_joiner_last_name }}",
+            "passwordPolicies": "DisablePasswordExpiration",
+            "passwordProfile": {
+                "password": "{{ initial_user_password }}",
+                "forceChangePasswordNextSignIn": true
+            },
+            "officeLocation": "{{ office_location }}",
+            "preferredLanguage": "en-US",
+            "surname": "{{ new_joiner_last_name }}",
+            "userPrincipalName": "{{ valid_user_name }}@{{ domain }}",
+            "onPremisesExtensionAttributes": {
+              "extensionAttribute1": "Welcome",
+            }
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 201
+      register: user
+  when: ritm_details.req_create_user is defined and cartridge_form_id == 'JOINER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ user }}"
+        task_name: Creating new user with required informations
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_create_user }}"
+        statusMsg: "User Creation Failed"
+        status: "{{ Failed_state }}"
+
+# - name: Sleep for 10 seconds and continue with play
+#   wait_for:
+#     timeout: 10
+#   delegate_to: localhost
+
+- set_fact:
+    user_details: user
+    userName: "{{ user.json.userPrincipalName }}"
+  when: user is defined
+
+- debug:
+    msg: "{{ userName }}"
+
+
+- name: "Update manager to the user {{ new_joiner_first_name }}.{{ new_joiner_last_name }}"
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/users/{{ userName }}/manager/$ref"
+        method: PUT
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{manager_name}}@{{domain}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: update_manager
+  when: ritm_details.req_create_user is defined and cartridge_form_id == 'JOINER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ update_manager }}"
+        task_name: Update manager to the user {{ new_joiner_first_name }}.{{ new_joiner_last_name }}
+        is_all_task_success: "No"
+        update_ritm: "true"
+        ritm_req_no: "{{ ritm_details.req_create_user }}"
+        statusMsg: "User Creation Failed"
+        status: "{{ Failed_state }}"
+
+- debug:
+    msg: "{{ update_manager }}"
+
+
+##Updating RITM STATUS###
+
+- name: Update RITM for user creation ( Success )
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_create_user }}"
+    work_notes_status_msg: "User Created Successfully"
+    Status: "{{ State }}"
+
+## Add member to a group ##
+
+- name: Add member to software group
+  block:
+    - uri:
+        url: "{{ ms_graph_uri }}/v1.0/groups/{{item}}/members/$ref"
+        method: POST
+        return_content: yes
+        headers:
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ ms_online_access_token }}"
+        body: |-
+          {
+            "@odata.id": "{{ user_uri }}/{{userName}}"
+          }
+        body_format: json
+        validate_certs: false
+        status_code: 204
+      register: add_groupmembership
+      loop: "{{ group_id_list}}"  #group_id_list is defined in the common_utilities/get_resource_details
+  when: (ritm_details.req_software is defined or ritm_details.req_distribution_list is defined) and cartridge_form_id == 'JOINER'
+  rescue:
+    - import_role:
+        name: common_utilities
+        tasks_from: logging
+      vars:
+        exception: "{{ add_groupmembership }}"
+        task_name: Add member to software group
+        is_all_task_success: "No"
+        statusMsg: "Failure while adding member to software groups"
+        status: "{{ Failed_state }}"
+
+##Updating RITM STATUS###
+
+- name: Update RITM for creating mailbox sucessfully
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_mailbox }}"
+    work_notes_status_msg: "Mailbox created sucessfully"
+    Status: "{{ State }}"
+  when: ritm_details.req_mailbox is defined
+
+- name: Update RITM for sucessfull addition of member to a DL
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_distribution_list }}"
+    work_notes_status_msg: "Adding member to the given DL group is sucessfull"
+    Status: "{{ State }}"
+  when: ritm_details.req_distribution_list is defined  
+
+- name: Update RITM for sucessfull addition of member to a group
+  import_role:
+    name: common_utilities
+    tasks_from: ritm_status_update
+  vars:
+    ritm_req_number: "{{ ritm_details.req_software }}"
+    work_notes_status_msg: "Adding member to the given group is sucessfull"
+    Status: "{{ State }}"
+  when: ritm_details.req_software is defined  
+
+
+##PausingforMailboxCreation##
+- pause:
+    minutes: 3
+
+##sending_mails##
+
+- name: Welcome eMail to user
+  import_role:
+    name: common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ mail_body_joiner }}"
+    to_email_address: "{{ userName }}"
+    cc_email_address1: "{{ requestor_email }}"
+    cc_email_address2: "{{ manager_email }}"
+
+- name: eMail to user requestor
+  import_role:
+    name: common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ mail_body_requestor }}"
+    to_email_address: "{{ requestor_email }}"
+    cc_email_address1: "{{ manager_email }}"
+    cc_email_address2: "{{ requestor_email }}"
+
+- name: Password eMail to user
+  import_role:
+    name: common_utilities
+    tasks_from: send_mail
+  vars:
+    mail_content: "{{ mail_body_password }}"
+    to_email_address: "{{ userName }}"
+    cc_email_address1: "{{ manager_email }}"
+    cc_email_address2: "{{ manager_email }}"
+
+- name: Update SNOW Request for Joiner
+  import_role:
+    name: common_utilities
+    tasks_from: snow_status_update
+  when: req_no is defined and cartridge_form_id == 'JOINER'
+  vars:
+    ritm_req_number: "{{ req_no }}"
+    work_notes_status_msg: "User Created Sucessfully"
+    Status: "{{ State }}"       
